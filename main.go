@@ -2,69 +2,99 @@ package main
 
 import (
 	"fmt"
-	"github.com/andybons/gogif"
 	"github.com/nfnt/resize"
+	"github.com/oliamb/cutter"
 	"image"
 	"image/draw"
-	"image/gif"
-	_ "image/png"
+	"image/png"
 	"io/ioutil"
+	"log"
 	"math"
 	"os"
+	"os/exec"
+	"strconv"
 )
 
 func main() {
 
-	const fps = 100
-	const seconds = 3
-	const path = "./layers/"
-	const depth = 0.5
+	const fps = 60
+	const seconds = 5
+	const layersDir = "layers"
+	const tempPath = "/tmp/zero"
+	const depth = 1
 
-	files, _ := ioutil.ReadDir(path)
+	// get arguments
+	args := os.Args
+
+	if len(args) != 2 {
+		log.Fatal("ERROR: argument format not correct!")
+	}
+
+	workPath := args[1]
+
+	// search and delete temp
+	cmd := exec.Command("rm", "-fr", tempPath)
+	err := cmd.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Create temp folder
+	cmd = exec.Command("mkdir", tempPath) 
+	err = cmd.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	files, _ := ioutil.ReadDir(workPath + "/" + layersDir)
 	for _, f := range files {
 		fmt.Println("Opening file ", f.Name())
 	}
 
-	outGif := &gif.GIF{}
+	var id int
 
 	for i := 0; i < fps*seconds; i++ {
 		fmt.Printf("%d/%d\n", i, seconds*fps)
 
 		K := 2 * math.Pi / (fps * seconds)
 
-		img := image.NewRGBA(image.Rect(0, 0, 500, 500))
+		img := image.NewRGBA(image.Rect(0, 0, 2000, 2000))
 		for _, f := range files {
 
 			name := f.Name()
 
 			var pos int
-			var id int
 			var z int
 
 			fmt.Sscanf(name, "%d_%d_%d.png", &pos, &id, &z)
 
-			fmt.Println(z)
-
 			offX := int(float64(z) * depth * math.Cos(K*float64(i)))
 			offY := int(float64(z) * depth * math.Sin(K*float64(i)))
 
-			file, _ := os.Open(path + f.Name())
+			file, _ := os.Open(workPath + "/" + layersDir + "/" + f.Name())
 			defer file.Close()
 			layer, _, _ := image.Decode(file)
-			layer = resize.Resize(500, 500, layer, resize.Lanczos3)
+
 			draw.Draw(img, img.Bounds(), layer, image.Point{offX, offY}, draw.Over)
+
 		}
+		croppedImg, _ := cutter.Crop(img, cutter.Config{
+			Width:  1800,
+			Height: 1800,
+			Mode:   cutter.Centered,
+		})
+		croppedImg = resize.Resize(500, 500, croppedImg, resize.MitchellNetravali)
 
-		palettedImg := image.NewPaletted(img.Bounds(), nil)
-		quantizer := gogif.MedianCutQuantizer{NumColor: 256}
-		quantizer.Quantize(palettedImg, img.Bounds(), img, image.ZP)
+		outName := fmt.Sprintf("out_%03d.png", i)
 
-		outGif.Image = append(outGif.Image, palettedImg)
-		outGif.Delay = append(outGif.Delay, 1)
+		outFile, _ := os.Create(tempPath + "/" + outName)
+		defer outFile.Close()
+		png.Encode(outFile, croppedImg)
 	}
 
-	// save to out.gif
-	f, _ := os.OpenFile("out.gif", os.O_WRONLY|os.O_CREATE, 0600)
-	defer f.Close()
-	gif.EncodeAll(f, outGif)
+	videoName := fmt.Sprintf("%05d.mp4", id)
+	cmd = exec.Command("ffmpeg", "-r", strconv.Itoa(fps), "-f", "image2", "-s", "500X500", "-i", tempPath+"/out_%03d.png", "-vcodec", "libx264", "-crf", "15", "-pix_fmt", "yuv420p", workPath+"/"+videoName)
+	err = cmd.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 }

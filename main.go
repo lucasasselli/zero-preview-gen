@@ -39,18 +39,46 @@ func main() {
 		log.Fatal(err)
 	}
 	// Create temp folder
-	cmd = exec.Command("mkdir", tempPath) 
+	cmd = exec.Command("mkdir", tempPath)
 	err = cmd.Run()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	files, _ := ioutil.ReadDir(workPath + "/" + layersDir)
-	for _, f := range files {
-		fmt.Println("Opening file ", f.Name())
-	}
+	layerArray := make([]image.Image, 0, 10)
+	zArray := make([]int, 0, 10)
 
-	var id int
+	var id int = -1
+
+	fileInfoArray, _ := ioutil.ReadDir(workPath + "/" + layersDir)
+	for _, fileInfo := range fileInfoArray {
+		fmt.Println("Opening file ", fileInfo.Name())
+
+		// Parse name
+		name := fileInfo.Name()
+
+		var pos int
+		var z int
+		var _id int
+
+		fmt.Sscanf(name, "%d_%d_%d.png", &pos, &_id, &z)
+
+		if id == -1 {
+			id = _id
+		} else {
+			if _id != id {
+				log.Fatal("ID mismatch! is ", _id, " was ", id)
+			}
+		}
+
+		// Read file
+		file, _ := os.Open(workPath + "/" + layersDir + "/" + fileInfo.Name())
+		defer file.Close()
+		layer, _, _ := image.Decode(file)
+
+		layerArray = append(layerArray, layer)
+		zArray = append(zArray, z)
+	}
 
 	for i := 0; i < fps*seconds; i++ {
 		fmt.Printf("%d/%d\n", i, seconds*fps)
@@ -58,21 +86,13 @@ func main() {
 		K := 2 * math.Pi / (fps * seconds)
 
 		img := image.NewRGBA(image.Rect(0, 0, 2000, 2000))
-		for _, f := range files {
+		for j := 0; j < len(layerArray); j++ {
 
-			name := f.Name()
-
-			var pos int
-			var z int
-
-			fmt.Sscanf(name, "%d_%d_%d.png", &pos, &id, &z)
+			layer := layerArray[j]
+			z := zArray[j]
 
 			offX := int(float64(z) * depth * math.Cos(K*float64(i)))
 			offY := int(float64(z) * depth * math.Sin(K*float64(i)))
-
-			file, _ := os.Open(workPath + "/" + layersDir + "/" + f.Name())
-			defer file.Close()
-			layer, _, _ := image.Decode(file)
 
 			draw.Draw(img, img.Bounds(), layer, image.Point{offX, offY}, draw.Over)
 
